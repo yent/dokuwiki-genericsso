@@ -1,0 +1,7 @@
+base genericsso
+author Etienne MELEARD
+email etienne.meleard@renater.fr
+date 2024-07-23
+name Generic SSO authentication plugin
+desc Provides generic way to use SSO authentication
+url https://www.dokuwiki.org/plugin:genericsso
