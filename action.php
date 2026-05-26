@@ -24,7 +24,7 @@ class action_plugin_genericsso extends DokuWiki_Action_Plugin {
     /**
      * Handle event
      *
-     * @param Doku_Event $event
+     * @param Event $event
      */
     public function handle(Event $event): void {
         global $lang;
