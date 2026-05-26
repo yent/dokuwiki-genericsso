@@ -1,7 +1,7 @@
 <?php
 
+use dokuwiki\Extension\AuthPlugin;
 use dokuwiki\Extension\Event;
-use JetBrains\PhpStorm\NoReturn;
 
 /**
  * Provides generic SSO authentication
@@ -9,35 +9,13 @@ use JetBrains\PhpStorm\NoReturn;
  * @date 2018-08-27
  */
 
-class auth_plugin_genericsso extends DokuWiki_Auth_Plugin {
+class auth_plugin_genericsso extends AuthPlugin {
     /** @var bool */
     public $success = false;
 
-    /**
-     * Possible things an auth backend module may be able to
-     * do. The things a backend can do need to be set to true
-     * in the constructor.
-     * 
-     * @var array
-     */
-    protected $cando = [
-        'addUser'      => false, // can Users be created?
-        'delUser'      => false, // can Users be deleted?
-        'modLogin'     => false, // can login names be changed?
-        'modPass'      => false, // can passwords be changed?
-        'modName'      => false, // can real names be changed?
-        'modMail'      => false, // can emails be changed?
-        'modGroups'    => false, // can groups be changed?
-        'getUsers'     => false, // can a (filtered) list of users be retrieved?
-        'getUserCount' => false, // can the number of users be retrieved?
-        'getGroups'    => false, // can a list of available groups be retrieved?
-        'external'     => true,  // does the module do external auth checking?
-        'logout'       => true,  // can the user logout again? (eg. not possible with HTTP auth)
-    ];
-    
-    private array|null $_conf = null;
-    private array|null $_attrs = null;
-    private array|null $_users = null;
+    private array|null $config = null;
+    private array|null $attributes = null;
+    private array|null $users = null;
     
     /**
      * Constructor
@@ -45,7 +23,10 @@ class auth_plugin_genericsso extends DokuWiki_Auth_Plugin {
     public function __construct() {
         parent::__construct();
 
-        $this->_getConf(); // Checks config
+        $this->cando['external'] = true;
+        $this->cando['logout'] = true;
+
+        $this->getConfiguration(); // Checks config
         
         $this->success = true;
     }
@@ -55,17 +36,17 @@ class auth_plugin_genericsso extends DokuWiki_Auth_Plugin {
      * 
      * @throw Exception
      */
-    private function _getConf(string $param = null): array|string|null {
-        if(!$this->_conf) {
+    private function getConfiguration(string $param = null): array|string|null {
+        if(!$this->config) {
             global $conf;
-            $this->_conf = $conf['plugin']['genericsso'];
+            $this->config = $conf['plugin']['genericsso'];
             
             $bad = [];
             foreach([
                 'login_url', 'logout_url', 'home_url', 'headers', 'autologin',
                 'idp_attribute', 'id_attribute', 'email_attribute', 'fullname_attribute'
             ] as $p) {
-                if(!array_key_exists($p, $this->_conf))
+                if(!array_key_exists($p, $this->config))
                     $bad[] = $p;
             }
             
@@ -76,15 +57,15 @@ class auth_plugin_genericsso extends DokuWiki_Auth_Plugin {
         }
         
         if($param) {
-            if(!array_key_exists($param, $this->_conf)) {
+            if(!array_key_exists($param, $this->config)) {
                 msg('Unknown configuration parameter for Dokuwiki SSO login : '.$param, -1);
                 return null;
             }
             
-            return $this->_conf[$param];
+            return $this->config[$param];
         }
         
-        return $this->_conf;
+        return $this->config;
     }
          
     /**
@@ -92,24 +73,24 @@ class auth_plugin_genericsso extends DokuWiki_Auth_Plugin {
      * 
      * @throw Exception
      */
-    private function _getAttributes(bool $fatal = true, string $attr = null): array|null {
-        if(is_null($this->_attrs)) {
-            $headers = $this->_getConf('headers') ? getallheaders() : null;
+    private function getAttributes(bool $fatal = true, string $attr = null): array|string|null {
+        if(is_null($this->attributes)) {
+		    $headers = $this->getConfiguration('headers') ? getallheaders() : null;
             
-            $this->_attrs = [];
+            $this->attributes = [];
             foreach(['idp', 'id', 'email', 'fullname'] as $k) {
-                $src = $this->_getConf($k.'_attribute');
+                $src = $this->getConfiguration($k.'_attribute');
                 if($headers) {
-                    $this->_attrs[$k] = array_key_exists($src, $headers) ? $headers[$src] : null;
+                    $this->attributes[$k] = array_key_exists($src, $headers) ? $headers[$src] : null;
                 } else {
-                    $this->_attrs[$k] = getenv($src);
+                    $this->attributes[$k] = getenv($src);
                 }
             }
         }
         
         $bad = array_map(function($k) {
-            return $this->_getConf($k.'_attribute');
-        }, array_keys(array_filter($this->_attrs, 'is_null')));
+            return $this->getConfiguration($k.'_attribute');
+        }, array_keys(array_filter($this->attributes, 'is_null')));
         
         if($bad && $fatal) {
             msg('Missing attribute(s) for Dokuwiki SSO login : '.implode(', ', $bad), -1);
@@ -117,7 +98,7 @@ class auth_plugin_genericsso extends DokuWiki_Auth_Plugin {
         }
         
         if($attr) {
-            $v = array_key_exists($attr, $this->_attrs) ? $this->_attrs[$attr] : null;
+            $v = array_key_exists($attr, $this->attributes) ? $this->attributes[$attr] : null;
             
             if($v)
                 return $v;
@@ -128,99 +109,104 @@ class auth_plugin_genericsso extends DokuWiki_Auth_Plugin {
             return null;
         }
         
-        return $this->_attrs;
+        return $this->attributes;
     }
     
     /**
      * Check if any attributes
      */
-    private function _hasAttributes(string $attr = null): bool {
-        $attrs = $this->_getAttributes(false);
+    private function hasAttributes(string $name = null): bool {
+        $attributes = $this->getAttributes(false);
         
-        if(is_string($attr))
-            return array_key_exists($attr, $attrs) && !is_null($attrs[$attr]);
+        if(is_string($name))
+            return array_key_exists($name, $attributes) && !is_null($attributes[$name]);
             
-        return count(array_filter($this->_attrs)) > 0;
+        return count(array_filter($attributes)) > 0;
     }
     
     /**
      * Log info
      */
-    private function _log(string $msg): void {
+    private function log(string $msg): void {
         error_log('Dokuwiki SSO plugin: '.$msg);
     }
     
     /**
      * Go to URL
      */
-    #[NoReturn] private function _goto(string $url, string $target = ''): void {
+    private function goToUrl(string $url, string $target = ''): void {
         $url = $url ? str_replace('{target}', $target, $url) : $target;
         
-        $this->_log('redirecting user to '.$url);
+        $this->log('redirecting user to '.$url);
         header('Location: '.$url);
         exit;
     }
-    
-    
+
+
     /**
      * Check authentication
-     * 
+     *
      * @param string $user
      * @param string $pass
      * @param bool $sticky
+     *
+     * @throws Exception
      */
-    public function trustExternal($user, $pass, $sticky = false) {
+    public function trustExternal($user, $pass, $sticky = false): bool {
         $do = array_key_exists('do', $_REQUEST) ? $_REQUEST['do'] : null;
-        $autologin = $this->_getConf('autologin');
-        $has_attributes = $this->_hasAttributes();
-        $has_session = $this->_hasSession();
+        $autologin = $this->getConfiguration('autologin');
+        $hasAttributes = $this->hasAttributes();
+	    $hasSession = $this->hasSession();
 
-        $state = ['autologin' => $autologin, 'has_attributes' => $has_attributes, 'has_session' => $has_session];
+        $state = ['autologin' => $autologin, 'has_attributes' => $hasAttributes, 'has_session' => $hasSession];
         $state = preg_replace('`(\n|\s+)`', ' ', print_r($state, true));
 
-        if($do === 'login' && !$has_attributes)
+        if($do === 'login' && !$hasAttributes)
             $this->_login();
 
-        if($do === 'logout' && $has_attributes)
+        if($do === 'logout' && $hasAttributes)
             $this->_logout();
         
-        if($do === 'login' || ($autologin && $has_attributes && !$has_session)) {
-            $attrs = $this->_getAttributes();
+        if($do === 'login' || ($autologin && $hasAttributes && !$hasSession)) {
+            $attrs = $this->getAttributes();
             $data = $this->getUserData($user);
-            $this->_setSession($attrs['id'], $data['grps'], $attrs['email'], $attrs['fullname']);
-            $this->_log('authenticated user (state='.$state.')');
-            return;
+            $this->setSession($attrs['id'], $data['grps'], $attrs['email'], $attrs['fullname']);
+            $this->log('authenticated user (state='.$state.')');
+            return true;
         }
         
-        if($do === 'logout' || ($autologin && !$has_attributes && $has_session)) {
-            $this->_dropSession();
-            $this->_log('logged user out (state='.$state.')');
-            return;
+        if($do === 'logout' || ($autologin && !$hasAttributes && $hasSession)) {
+            $this->dropSession();
+            $this->log('logged user out (state='.$state.')');
+            return true;
         }
         
         // Check user match is SSO and local session
-        if($autologin && $has_session && $has_attributes) {
-            if($_SESSION[DOKU_COOKIE]['auth']['user'] !== $this->_getAttributes(false, 'id')) {
-                $this->_log('SSO user doesn\'t match local user, logging out (state='.$state.')');
+        if($autologin && $hasSession && $hasAttributes) {
+            if($_SESSION[DOKU_COOKIE]['auth']['user'] !== $this->getAttributes(false, 'id')) {
+                $this->log('SSO user doesn\'t match local user, logging out (state='.$state.')');
                 $this->_logout();
             }
         }
         
         // Refresh from cookie if any
-        auth_login(null, null);
+	    auth_login(null, null);
+	    return true;
     }
     
     /**
      * Check if local session exists
      */
-    private function _hasSession(): bool {
+    private function hasSession(): bool {
         return array_key_exists(DOKU_COOKIE, $_SESSION) && array_key_exists('auth', $_SESSION[DOKU_COOKIE]) && $_SESSION[DOKU_COOKIE]['auth']['user'];
     }
-    
+
     /**
      * Create user session
+     *
+     * @throws Exception
      */
-    private function _setSession(string $user, array $grps = null, string $mail = null, string $name = null): void {
+    private function setSession(string $user, array $grps = null, string $mail = null, string $name = null): void {
         global $USERINFO;
         global $INPUT;
         
@@ -235,46 +221,48 @@ class auth_plugin_genericsso extends DokuWiki_Auth_Plugin {
         auth_setCookie($user, auth_encrypt($pass, $secret), false);
 
         $dummy = [];
-        trigger_event('AUTH_EXTERNAL', $dummy);
+        Event::createAndTrigger('AUTH_EXTERNAL', $dummy);
     }
     
     /**
      * Remove session data
      */
-    private function _dropSession(): void {
+    private function dropSession(): void {
         auth_logoff();
 
         $dummy = [];
-        trigger_event('AUTH_EXTERNAL', $dummy);
+        Event::createAndTrigger('AUTH_EXTERNAL', $dummy);
     }
     
     /**
      * Redirect for login
      */
-    #[NoReturn] public function _login(): void {
-        $this->_dropSession();
-        $this->_goto($this->_getConf('login_url'), wl(getId()));
+    public function _login(): void {
+        $this->dropSession();
+        $this->goToUrl($this->getConfiguration('login_url'), wl(getId()));
     }
     
     /**
      * Redirect for logout
      */
-    #[NoReturn] public function _logout(): void {
-        $this->_dropSession();
-        $this->_goto($this->_getConf('logout_url'), $this->_getConf('home_url'));
+    public function _logout(): void {
+        $this->dropSession();
+        $this->goToUrl($this->getConfiguration('logout_url'), $this->getConfiguration('home_url'));
     }
-    
+
     /**
      * Check password (not used but required by inheritance)
-     * 
+     *
      * @param string $user
      * @param string $pass
+     *
+     * @throws Exception
      */
     public function checkPass($user, $pass): bool {
         if($_SESSION[DOKU_COOKIE]['auth']['user'] !== $user)
             return false;
         
-        $attrs = $this->_getAttributes();
+        $attrs = $this->getAttributes();
         if($user !== $attrs['id'])
             return false;
         
@@ -292,14 +280,14 @@ class auth_plugin_genericsso extends DokuWiki_Auth_Plugin {
      * @param bool $requireGroups
      */
     public function getUserData($user, $requireGroups = true): array {
-        if(is_null($this->_users)) {
-            $this->_users = [];
+        if(is_null($this->users)) {
+            $this->users = [];
             if(@file_exists(DOKU_CONF.'users.auth.php')) {
                 foreach(file(DOKU_CONF.'users.auth.php') as $line) {
                     $line = trim(preg_replace('/#.*$/', '', $line)); //ignore comments
                     if(!$line) continue;
                     $row = explode(':', $line, 5);
-                    $this->_users[$row[0]] = [
+                    $this->users[$row[0]] = [
                         'pass' => $row[1],
                         'name' => urldecode($row[2]),
                         'mail' => $row[3],
@@ -314,11 +302,11 @@ class auth_plugin_genericsso extends DokuWiki_Auth_Plugin {
 
         global $INPUT;
         if($user === $INPUT->server->str('REMOTE_USER')) {
-            $attrs = $this->_getAttributes();
+            $attrs = $this->getAttributes();
             $data = ['name' => $attrs['fullname'], 'mail' => $attrs['email'], 'grps' => []];
         }
 
-        $grps = array_key_exists($user, $this->_users) ? $this->_users[$user]['grps'] : [];
+        $grps = array_key_exists($user, $this->users) ? $this->users[$user]['grps'] : [];
         $data['grps'] = array_unique(array_merge($grps, $data['grps'], ['session']));
 
         return $requireGroups ? $data : array_diff_key($data, ['grps' => null]);
